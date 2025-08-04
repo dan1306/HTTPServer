@@ -2,6 +2,7 @@ import { rejects } from 'assert';
 import { Buffer } from 'buffer';
 import { Socket } from 'dgram';
 import { connect } from 'http2';
+import { builtinModules } from 'module';
 import * as net from 'net';
 import { resolve } from 'path';
 
@@ -30,13 +31,58 @@ type TCPConn = {
     ended: boolean
 }
 
+// A dynamic-sized buffer
+
+type DynBuf = {
+    data: Buffer, // data.length actual siz of the buffer
+    length: number, // how much of the buffer is occupied
+}
+
+// append data to Dynbuf
+
+function bufPush(buf: DynBuf, data:Buffer): void {
+    const newLen = buf.length + data.length;
+    if(buf.data.length < newLen) {
+        let cap = Math.max(buf.data.length, 32);
+        while(cap < newLen) {
+            cap *= 2;
+        }
+        const grown = Buffer.alloc(cap);
+        buf.data.copy(grown, 0, 0);
+        buf.data = grown;
+    }
+
+    data.copy(buf.data, buf.length, 0); // data.copy src buffer, copy into buf.data, start writing from buf.length, start reading from the 0th index in old buffer
+    buf.length = newLen;
+}
+
+function cutMessage( buf: DynBuf ): null | Buffer {
+
+    // message are seperated by '\n'
+    const idx = buf.data.subarray(0, buf.length).indexOf('\n');
+    if(idx < 0) {
+        return null; // not complete
+    }
+
+    // make a copy of the message and move the remaning data to the front
+    const msg = Buffer.from(buf.data.subarray(0, idx + 1));
+    bufPop(buf, idx + 1);
+    return msg
+
+}
+
+function bufPop(buf: DynBuf, len: number): void {
+    buf.data.copyWithin(0, len, buf.length); // buf.copyWithin(dst, src_start, src_end)
+    buf.length -= len;
+}
+
 function soInit(socket: net.Socket): TCPConn {
     const conn: TCPConn = {
         socket: socket,
         reader: null,
         ended: false,
         err: null
-    }
+    };
 
     socket.on('data', (data:Buffer) => {
         console.assert(conn.reader);
@@ -147,14 +193,15 @@ async function newConn(socket: net.Socket): Promise<void> {
 
 async function serveClient(socket:net.Socket): Promise<void> {
     const conn: TCPConn = soInit(socket);
+    const buf: DynBuf = {data: Buffer.alloc(0), length: 0};
     while(true) {
         const data = await soRead(conn);
         if (data.length === 0) {
             console.log('end communication');
             break;
-        }
-
-        console.log('data', data);
+        }; 
+        console.log();
+        console.log('data: ', data);
         await soWrite(conn, data);
     };
 };
