@@ -6,6 +6,36 @@ let server = net.createServer({
 server.on('error', (err) => { throw err; });
 server.on('connection', newConn);
 server.listen({ host: '127.0.0.1', port: 1234 });
+// append data to Dynbuf
+function bufPush(buf, data) {
+    const newLen = buf.length + data.length;
+    if (buf.data.length < newLen) {
+        let cap = Math.max(buf.data.length, 32);
+        while (cap < newLen) {
+            cap *= 2;
+        }
+        const grown = Buffer.alloc(cap);
+        buf.data.copy(grown, 0, 0);
+        buf.data = grown;
+    }
+    data.copy(buf.data, buf.length, 0); // data.copy src buffer, copy into buf.data, start writing from buf.length, start reading from the 0th index in old buffer
+    buf.length = newLen;
+}
+function cutMessage(buf) {
+    // message are seperated by '\n'
+    const idx = buf.data.subarray(0, buf.length).indexOf('\n');
+    if (idx < 0) {
+        return null; // not complete
+    }
+    // make a copy of the message and move the remaning data to the front
+    const msg = Buffer.from(buf.data.subarray(0, idx + 1));
+    bufPop(buf, idx + 1);
+    return msg;
+}
+function bufPop(buf, len) {
+    buf.data.copyWithin(0, len, buf.length); // buf.copyWithin(dst, src_start, src_end)
+    buf.length -= len;
+}
 function soInit(socket) {
     const conn = {
         socket: socket,
@@ -108,14 +138,39 @@ async function newConn(socket) {
 // echo server
 async function serveClient(socket) {
     const conn = soInit(socket);
+    const buf = { data: Buffer.alloc(0), length: 0 };
     while (true) {
-        const data = await soRead(conn);
-        if (data.length === 0) {
-            console.log('end communication');
-            break;
+        // try to get 1 message from the buffer
+        const msg = cutMessage(buf);
+        if (!msg) {
+            // need more data 
+            const data = await soRead(conn);
+            bufPush(buf, data);
+            // EOF
+            if (!data) {
+                console.log('end communication');
+                break;
+            }
+            continue;
         }
-        console.log('data', data);
-        await soWrite(conn, data);
+        // process the message and send the response
+        if (msg.equals(Buffer.from('quit\n'))) {
+            await soWrite(conn, Buffer.from('Bye.\n'));
+            socket.destroy();
+            return;
+        }
+        else {
+            const reply = Buffer.concat([Buffer.from('Echo: '), msg]);
+            await soWrite(conn, reply);
+        }
+        // const data = await soRead(conn);
+        // if (data.length === 0) {
+        //     console.log('end communication');
+        //     break;
+        // }; 
+        // console.log();
+        // console.log('data: ', data);
+        // await soWrite(conn, data);
     }
     ;
 }

@@ -1,6 +1,7 @@
 import { rejects } from 'assert';
 import { Buffer } from 'buffer';
 import { Socket } from 'dgram';
+import { CONNREFUSED } from 'dns';
 import { connect } from 'http2';
 import { builtinModules } from 'module';
 import * as net from 'net';
@@ -195,13 +196,36 @@ async function serveClient(socket:net.Socket): Promise<void> {
     const conn: TCPConn = soInit(socket);
     const buf: DynBuf = {data: Buffer.alloc(0), length: 0};
     while(true) {
-        const data = await soRead(conn);
-        if (data.length === 0) {
-            console.log('end communication');
-            break;
-        }; 
-        console.log();
-        console.log('data: ', data);
-        await soWrite(conn, data);
+        // try to get 1 message from the buffer
+        const msg: null|Buffer = cutMessage(buf);
+        if (!msg){
+            // need more data 
+            const data: Buffer = await soRead(conn);
+            bufPush(buf, data);
+            // EOF
+            if(!data){
+                console.log('end communication');
+                break;
+            }
+            continue;
+        }
+
+        // process the message and send the response
+        if(msg!.equals(Buffer.from('quit\n'))){
+            await soWrite(conn, Buffer.from('Bye.\n'));
+            socket.destroy();
+            return;
+        } else {
+            const reply = Buffer.concat([Buffer.from('Echo: '), msg]);
+            await soWrite(conn, reply);
+        }
+        // const data = await soRead(conn);
+        // if (data.length === 0) {
+        //     console.log('end communication');
+        //     break;
+        // }; 
+        // console.log();
+        // console.log('data: ', data);
+        // await soWrite(conn, data);
     };
 };
