@@ -68,7 +68,7 @@ function cutMessage( buf: DynBuf ): null | Buffer {
     // make a copy of the message and move the remaning data to the front
     const msg = Buffer.from(buf.data.subarray(0, idx + 1));
     bufPop(buf, idx + 1);
-    return msg
+    return msg;
 
 }
 
@@ -229,3 +229,5 @@ async function serveClient(socket:net.Socket): Promise<void> {
         // await soWrite(conn, data);
     };
 };
+
+// first Push
